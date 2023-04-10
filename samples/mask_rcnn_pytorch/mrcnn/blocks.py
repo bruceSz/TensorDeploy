@@ -37,8 +37,10 @@ class MyBN(object):
         self.running_var_ = (1-self._momenta) * x_var + self._momenta * self.running_var_
         x_hat = (x-x_mean)/np.sqrt(x_var + self._eps)
         y = self._gamma * x_hat + self._beta
+        return y
 
 def bn_test():
+    torch.set_default_tensor_type(torch.DoubleTensor)
     data = np.array([[1.0,2.0],
                      [1.0,3.0],
                      [1.0,4.0]])
@@ -51,7 +53,7 @@ def bn_test():
     mbn = MyBN(momentum=0.01, eps = 0.001, n_features=2)
     mbn._beta = bn_torch.bias.detach().numpy()
     mbn._gamma = bn_torch.weight.detach().numpy()
-    bn_out = mbn.forward(data_torch)
+    bn_out = mbn.forward(data)
     print(bn_out)
 
 if __name__ == "__main__":
