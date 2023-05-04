@@ -1,0 +1,20 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@xpilot_build_tools//:globals.bzl", "global_definitions")
+load("@xpilot_build_tools//:cpu_configs.bzl", "CPU_NAMES")
+
+
+global_definitions()
+
+cc_library(
+    name = "gflags",
+    srcs = glob([
+        "libs/*",
+    ]),
+    hdrs = glob([
+        "include/gflags/**/*.h",
+        
+    ]),
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)

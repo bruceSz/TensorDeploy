@@ -39,14 +39,18 @@ class MyBN(object):
         y = self._gamma * x_hat + self._beta
 
 def bn_test():
+    torch.set_default_tensor_type(torch.DoubleTensor)
     data = np.array([[1.0,2.0],
                      [1.0,3.0],
                      [1.0,4.0]])
     bn_torch = nn.BatchNorm1d(num_features=2)
+    
     data_torch = torch.from_numpy(data)
-    bn_output_torch = bn_torch(data_torch)
+    data_torch = data_torch.to(torch.float64)
+    print(data_torch.dtype)
+    bn_output_torch = bn_torch(data_torch.double())
     print("bn torch done.")
-    print(bn_output_torch)
+    print("bn output: ",bn_output_torch)
 
     mbn = MyBN(momentum=0.01, eps = 0.001, n_features=2)
     mbn._beta = bn_torch.bias.detach().numpy()
