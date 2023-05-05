@@ -92,14 +92,17 @@ class Layer(object):
         self.nodes = []
         for i in range(node_count):
             self.nodes.append(Node(layer_idx, i))
+        #ConstNode here is bias?
         self.nodes.append(ConstNode(layer_idx, node_count))
 
     
     def set_output(self, data):
+        
         for i in range(len(data)):
             self.nodes[i].set_output(data[i])
 
     def calc_output(self):
+        # calculate each node's output(based on it's input)
         for node in self.nodes[:-1]:
             node.calc_output()
 
@@ -151,14 +154,96 @@ class Network(object):
         for i in range(layer_c):
             self.layers.append(Layer(i, layers[i]))
         for layer in range(layer_c - 1):
+            # for fc, connections are cartesian product of up nodes and down nodes.
             connections = [Connection(up_node, down_node)
                            for up_node in self.layers[layer].nodes
                            for down_node in self.layers[layer + 1].nodes[:-1]]
             for conn in connections:
                 self.connections.add_connection(conn)
-                conn.down_node.append_upstream_connection(conn)
-                conn.up_node.append_downstream_connection(conn)
+                conn.downstream_node.append_upstream_connection(conn)
+                conn.upstream_node.append_downstream_connection(conn)
+
+        
 
 
     def train(self, labels, dataset, rate, iter):
-        
+        '''
+        '''
+        for i in range(iter):
+            for d in range(len(dataset)):
+                self.train_one_sample(labels[d], dataset[d], rate)
+
+    
+    def train_one_sample(self, label, data, rate):
+        self.predict(data)
+        self.calc_delta(label)
+        self.update_weights(rate)
+
+    def predict(self, data):
+        self.layers[0].set_output(data)
+        for i in range(1, len(self.layers)):
+            self.layers[i].calc_output()
+        return list(map(lambda node: node.output, self.layers[-1].nodes[:-1]))
+    
+    def dump(self):
+        for l in self.layers:
+            l.dump()
+
+    def update_weights(self, rate):
+
+        for l in self.layers[:-1]:
+            for node in l.nodes:
+                for conn in node.downstream:
+                    conn.update_weight(rate)
+
+    def calc_gradient(self):
+        for l in self.layers[:-1]:
+            for node in l.nodes:
+                for conn in node.downstream:
+                    conn.calc_gradient()
+
+    def get_gradient(self, label, sample):
+        self.predict(sample)
+        self.calc_delta(label)
+        self.calc_gradient()
+
+
+
+    def calc_delta(self, label):
+        output_nodes = self.layers[-1].nodes
+        for i in range(len(label)):
+            output_nodes[i].calc_output_delta(label[i])
+        # compute from last layer, backward
+        for l in self.layers[-2::-1]:
+            for node in l.nodes:
+                node.calc_hidden_delta()
+
+# refer: https://cuijiahua.com/blog/2018/11/dl-9.html
+def gradient_check(network, sample, label):
+    '''
+    '''
+
+    network_error = lambda vec1, vec2: \
+        0.5 * reduce(lambda a,b: a+b, map(lambda v:(v[0] - v[1]) * (v[0]-v[1]),zip(vec1, vec2)))
+    
+    network.get_gradient(label, sample)
+
+    for conn in network.connections.connections:
+        real_gradient = conn.get_gradient()
+        eps = 0.0001
+        conn.weight += eps
+
+        err1 = network_error(network.predict(sample), label)
+
+        conn.weight -= 2* eps
+        err2 = network_error(network.predict(sample), label)
+
+        expected_gradient = (err1 - err2) / (2 * eps)
+
+        print("expected_gradient: {}, real_gradient: {}".format(expected_gradient, real_gradient))
+
+
+if __name__ == '__main__':
+    gradient_check()
+              
+    
