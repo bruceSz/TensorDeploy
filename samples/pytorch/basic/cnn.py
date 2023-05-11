@@ -199,7 +199,7 @@ class ConvLayer(object):
     def expand_sensitivity_map(self, sensitivity_arr):
         # TODO, figure it out.
         depth = sensitivity_arr.shape[0]
-        #(h - k_h + 2p)/stripe + 1
+        #(h - k_h + 2p)/stripe + 1 ？
         expanded_width = (self.input_width - 
                           self.filter_width + 2 * self.zero_padding + 1)
         expanded_height = (self.input_height - 
@@ -215,7 +215,9 @@ class ConvLayer(object):
         return expand_array
 
 
-
+    @staticmethod
+    def calculate_output_width(in_width, filter_width, zero_padding, stride):
+        return int((in_width - filter_width + 2 * zero_padding)/stride + 1)
         
 
 
