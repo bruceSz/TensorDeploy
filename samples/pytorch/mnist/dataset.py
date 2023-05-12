@@ -2,9 +2,9 @@
 
 import torch 
 import torchvision
-def create_loader():
+def create_loader(root="../data/mnist"):
     train_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.MNIST('../data/mnist', train=True, download=False ,
+        torchvision.datasets.MNIST(root, train=True, download=False ,
                                     transform=torchvision.transforms.Compose([
                                         torchvision.transforms.ToTensor(),
                                         torchvision.transforms.Normalize(
@@ -14,7 +14,7 @@ def create_loader():
     )
 
     test_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.MNIST('../data/mnist', train=False, download=False,
+        torchvision.datasets.MNIST(root, train=False, download=False,
                                     transform=torchvision.transforms.Compose([
                                         torchvision.transforms.ToTensor(),
                                         torchvision.transforms.Normalize(
@@ -25,8 +25,8 @@ def create_loader():
 
 
 def test_create_loader():
-    
-    train_loader, test_loader = create_loader()
+    root = "../data/mnist"
+    train_loader, test_loader = create_loader(root)
     examples = enumerate(train_loader)
     batch_idx, (data, target) = next(examples)
     print(batch_idx)
