@@ -4,7 +4,10 @@
 import torch
 from typing import Any
 from torch import nn
-from anchors  import generate_anchor_base
+from torchvision import nms
+from torch.nn import functional as F
+import numpy as np
+from anchors  import generate_anchor_base, _compute_all_shifted_anchors
 from utils import loc2box
 
 class ProposalCreator(object):
@@ -45,7 +48,34 @@ class ProposalCreator(object):
         # clamp y
         roi[:, [1,3]] = torch.clamp(roi[:[1,3]], min=0, max=img_size[0])
 
-        #TODO.
+        min_size = self.min_size * scale
+        # return of torch.where is a tuple with len == 1
+        keep = torch.where(((roi[:,2] - roi[:,0]) >= min_size) &
+                           ((roi[:,3] - roi[:,1]) >= min_size))[0]
+        
+        # only keep bbox above size threshold
+        # only keep score corresponding to above boxes.
+        roi = roi[keep,:]
+        score = score[keep]
+
+        order = torch.argsort(score, descending=True)
+        if pre_nms_top_n > 0:
+            order = order[:pre_nms_top_n]
+
+        roi = roi[order,:]
+        score = score[order]
+
+        keep = nms(roi, score, self.nms_iou)
+
+        # if iou is too big(strict)
+        # duplicate some of keep by sample from keep list randomly.
+        if len(keep) < post_nms_top_n:
+            index_extra = np.random.choice(range(len(keep)), size=(post_nms_top_n - len(keep)), inplace=True)
+            keep = np.cat([keep, keep[index_extra]])
+        
+        keep = keep[:post_nms_top_n]
+        roi = roi[keep]
+        return roi
 
 
 
@@ -70,7 +100,50 @@ class RegionProposalNetwork(nn.Module):
         self.feat_stride = feat_stride
 
         self.proposal_layer = ProposalCreator(mode)
+
+        self.normal_init(self.conv1, 0, 0.01)
+        self.normal_init(self.score, 0, 0.01)
+        self.normal_init(self.loc, 0, 0.01)
+
+    def forward(self, x, img_size, scale=1.):
+        n, _, h, w = x.shape
+
+        x = F.relu(self.conv1(x))
+
+        rpn_locs = self.loc(x)
+        #transpose/permute channel dimension to last dimension which has length of 4.
+        rpn_locs = rpn_locs.permute(0,2,3,1).contiguous().view(n, -1, 4)
+
+        rpn_scores = self.score(x)
+        # same as rpn_locs, permute/transpose channel dimension to last dimension which has length of 2.
+        rpn_scores = rpn_scores.permute(0,2,3,1).contiguous().view(n, -1, 2)
+
+        rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
+        rpn_fg_scores = rpn_softmax_scores[:, :, 1]
+        rpn_fg_scores = rpn_fg_scores.view(n, -1, 1)
+
+        anchor = _compute_all_shifted_anchors(np.array(self.anchor_base), self.feat_stride, h, w)
+        rois = list()
+        roi_indices = list()
+        for i in range(n):
+            roi = self.proposal_layer(rpn_locs[i], rpn_fg_scores[i], anchor,img_size,scale=scale)
+            batch_index = i * torch.ones((len(roi),))
+            rois.append(roi.unqueeze(0))
+            roi_indices.append(batch_index.squeeze(0))
+
+        rois = torch.cat(rois,dim=0).type_as(x)
+        roi_indices = torch.cat(roi_indices,dim=0).type_as(x)
+
+        anchor = torch.from_numpy(anchor).unsqueeze(0).float().to(x.device)
+
+        return rpn_locs, rpn_scores, rois, roi_indices, anchor
+
+
         
 
-    def generate_anchor_base(self, anchor_scales, ratios):
-        
+    def normal_init(self, m, mean, stddev, truncated=False):
+        if truncated:
+            m.weight.data.normal_().fmod_(2).mul_(stddev).add_(mean)
+        else:
+            m.weight.data.normal_(mean, stddev)
+            m.bias.data.zero_()
