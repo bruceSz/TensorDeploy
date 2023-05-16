@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 
+import numpy as np
 
 def generate_anchor_base(base_size=16, ratios = [0.5, 1, 2], anchor_scales = [8, 16, 32]):
     # each anchor: four number, top-left(h,w) bottom-right(h,w)
-    anchor_base = np.zeros((len(ratios), len(anchor_scales), 4))
+    anchor_base = np.zeros((len(ratios)* len(anchor_scales), 4))
     for i in range(len(ratios)):
         for j in range(len(anchor_scales)):
             h = base_size * anchor_scales[j] * np.sqrt(ratios[i])
             w = base_size * anchor_scales[j] * np.sqrt(1./ratios[i])
 
             index = i * len(anchor_scales) + j
-            anchor_base[i, j, 0] =  - h/2.
-            anchor_base[i, j, 1] =  - w/2.
-            anchor_base[i, j, 2] =  h/2.
-            anchor_base[i, j, 3] =  w/2.
+            anchor_base[index, 0] =  - h/2.
+            anchor_base[index, 1] =  - w/2.
+            anchor_base[index, 2] =  h/2.
+            anchor_base[index, 3] =  w/2.
     return anchor_base
 
 
@@ -46,7 +47,11 @@ def _compute_all_shifted_anchors(anchor_base, feat_stride, height, width):
     # shape of anchor: K * A * 4
 
     anchor = anchor.reshape((K*A,4)).astype(np.float32)
-    
+
     return anchor
 
     
+
+
+if __name__ == '__main__':
+    pass
