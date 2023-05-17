@@ -7,9 +7,10 @@ from torch import nn
 from torchvision import nms
 from torch.nn import functional as F
 import numpy as np
+
 from anchors  import generate_anchor_base, _compute_all_shifted_anchors
 from utils import loc2box
-
+from utils import normal_init
 class ProposalCreator(object):
     def __init__(self,
                  mode, 
@@ -101,9 +102,9 @@ class RegionProposalNetwork(nn.Module):
 
         self.proposal_layer = ProposalCreator(mode)
 
-        self.normal_init(self.conv1, 0, 0.01)
-        self.normal_init(self.score, 0, 0.01)
-        self.normal_init(self.loc, 0, 0.01)
+        normal_init(self.conv1, 0, 0.01)
+        normal_init(self.score, 0, 0.01)
+        normal_init(self.loc, 0, 0.01)
 
     def forward(self, x, img_size, scale=1.):
         n, _, h, w = x.shape
@@ -121,7 +122,7 @@ class RegionProposalNetwork(nn.Module):
         rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
         rpn_fg_scores = rpn_softmax_scores[:, :, 1]
         rpn_fg_scores = rpn_fg_scores.view(n, -1, 1)
-
+        # shape of anchor : (feat_h * feat_w * 9 , 4)
         anchor = _compute_all_shifted_anchors(np.array(self.anchor_base), self.feat_stride, h, w)
         rois = list()
         roi_indices = list()
@@ -141,9 +142,4 @@ class RegionProposalNetwork(nn.Module):
 
         
 
-    def normal_init(self, m, mean, stddev, truncated=False):
-        if truncated:
-            m.weight.data.normal_().fmod_(2).mul_(stddev).add_(mean)
-        else:
-            m.weight.data.normal_(mean, stddev)
-            m.bias.data.zero_()
+   

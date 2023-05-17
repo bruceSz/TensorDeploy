@@ -3,6 +3,7 @@
 import torch.nn as nn
 import resnet50
 from rpn import RegionProposalNetwork
+from resnet50 import ResNet50ROIHead
 
 class FasterRCNN(nn.Module):
     def __init__(self, n_classes,
@@ -24,10 +25,50 @@ class FasterRCNN(nn.Module):
         ratios = ratios,
         feat_stride = feat_stride)
 
-        self.head = Resnet50ROIHead(
+        self.head = ResNet50ROIHead(
             n_classes = n_classes + 1,
             roi_size = 14, 
             spatial_scale = 1,
             classifier = classifier
         )
+    def forward(self, x, scale=1.0, mode=  "forward"):
+
+        if mode == "forward":
+            # x is n,c,h,w
+            img_size = x.shape[2:]
+
+            ft_map = self.extractor(x)
+            # rpn_locs, rpn_scores, rois, rois_indices(batch index), anchors
+            # rois here is first stage result (pass nms check, top_n check, roi size check.)
+            _,_, rois, rois_indices, _ = self.rpn.forward(ft_map, img_size, scale)
+
+            roi_cls_locs, roi_scores = self.head(ft_map, rois, rois_indices,img_size)
+
+            return roi_cls_locs, roi_scores,rois, rois_indices
+        
+        elif mode == "extract":
+            ft_map = self.extractor(x)
+            return ft_map
+        elif mode == "rpn":
+            ft_map = self.extractor(x)
+            img_size = x.shape[2:]
+            rpn_locs, rpn_scores, rois, rois_indices, anchor = self.rpn.forward(ft_map, img_size, scale)
+
+        elif mode == "head":
+            ft_map = self.extractor(x)
+            _,_, rois, rois_indices, _ = self.rpn.forward(ft_map, img_size, scale)
+            roi_cls_locs, roi_scores = self.head(ft_map, rois, rois_indices,img_size)
+
+            return roi_cls_locs, roi_scores
+        
+
+    def freeze_bn(self):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
+
+
+
+
 
