@@ -129,7 +129,7 @@ def resnet50(pretrained=False):
         model.load_state_dict(torch.load(GLOBAL_RESNET_PATH))
         #TODO read from local path
         #model.load_state_dict((model_urls['resnet50']))
-        pass
+        
     
     features = list([model.conv1, model.bn1, model.relu, model.maxpool, model.layer1, model.layer2, model.layer3])
     classifier = list([model.layer4, model.avgpool])

@@ -4,7 +4,7 @@
 import torch
 from typing import Any
 from torch import nn
-from torchvision import nms
+from torchvision.ops import nms
 from torch.nn import functional as F
 import numpy as np
 
