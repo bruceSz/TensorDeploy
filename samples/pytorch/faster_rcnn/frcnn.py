@@ -26,7 +26,7 @@ class FasterRCNN(nn.Module):
         feat_stride = feat_stride)
 
         self.head = ResNet50ROIHead(
-            n_classes = n_classes + 1,
+            n_class = n_classes + 1,
             roi_size = 14, 
             spatial_scale = 1,
             classifier = classifier

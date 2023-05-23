@@ -18,8 +18,11 @@ class MyTime(object):
 
 
 def weights_init(net, init_type='normal', init_gain=0.02):
+    
     def init_func(m):
+        
         class_name = m.__class__.__name__
+        
         #conv layer
         # gain can be computed by torch.nn.init.calculate_gain
         #1. in xavier uniform initializer, weight satisify (−a,a) uniform distribution
@@ -28,7 +31,7 @@ def weights_init(net, init_type='normal', init_gain=0.02):
 
         if hasattr(m, 'weight') and class_name.find("Conv") != -1:
             if init_type == 'normal':
-                torch.nn.init.normal_(m.weight.data, mean=0.0, gain=init_gain)
+                torch.nn.init.normal_(m.weight.data, mean=0.0, std=init_gain)
             elif init_type == 'xavier':
                 #2. in xavier normal initializer, weight satisify normal,
                 #   where mean=0, std = sqrt(2/fan_in+fan_out)
@@ -46,5 +49,7 @@ def weights_init(net, init_type='normal', init_gain=0.02):
             torch.nn.init.constant_(m.bias.data, 0.0)
     
     print("init network with %s" % init_type)
+    
     # apply the initialization to each layer in the network
     net.apply(init_func)
+    

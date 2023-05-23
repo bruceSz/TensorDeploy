@@ -121,11 +121,12 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
             
 
-GLOBAL_RESNET_PATH = "/disk2/TensorD/samples/pytorch/model_checkpoints/voc_weights_resnet.pth"
+GLOBAL_RESNET_PATH = "/disk2/TensorD/samples/pytorch/model_checkpoints/resnet.pth"
 
 def resnet50(pretrained=False):
     model = ResNet(BottleNeck, [3, 4, 6, 3])
     if pretrained:
+        assert(os.path.exists(GLOBAL_RESNET_PATH))
         model.load_state_dict(torch.load(GLOBAL_RESNET_PATH))
         #TODO read from local path
         #model.load_state_dict((model_urls['resnet50']))
@@ -135,13 +136,13 @@ def resnet50(pretrained=False):
     classifier = list([model.layer4, model.avgpool])
     features = nn.Sequential(*features)
 
-    classifier = nn.Sequential(*features)
+    classifier = nn.Sequential(*classifier)
     return features, classifier
 
 class ResNet50ROIHead(nn.Module):
-    def __init__(self, n_class, roi_size, spatial_scale, classfier):
+    def __init__(self, n_class, roi_size, spatial_scale, classifier):
         super(ResNet50ROIHead, self).__init__()
-        self.classifier = classfier
+        self.classifier = classifier
 
         self.cls_loc = nn.Linear(2048, n_class * 4)
         self.score = nn.Linear(2048, n_class)

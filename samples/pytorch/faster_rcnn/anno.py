@@ -47,7 +47,7 @@ class Annotator(object):
             b = (int(float(xmlbox.find("xmin").text)), int(float(xmlbox.find("ymin").text)),
                  int(float(xmlbox.find("xmax").text)), int(float(xmlbox.find("ymax").text)))
             
-            list_file.write(" " + ", ".join([str(a) for a in b]) + ',' + str(cls_id))
+            list_file.write(" " + ",".join([str(a) for a in b]) + ',' + str(cls_id))
 
             self.class_nums[self.classes.index(cls)] =  self.class_nums[self.classes.index(cls)] + 1
 
@@ -74,7 +74,7 @@ if __name__ == '__main__':
             list_file = open('%s_%s.txt'%(year, image_set), 'w', encoding='utf-8')
 
             for img_id in image_ids:
-                list_file.write("%s/VOC%s/JPEGImages/%s.jpg\n"%(anno.vocdevit_path, year, img_id))
+                list_file.write("%s/VOC%s/JPEGImages/%s.jpg"%(anno.vocdevit_path, year, img_id))
                 anno.convert_anno(year, img_id, list_file)
                 list_file.write("\n")
             anno.sets_num[type_index] = len(image_ids)

@@ -90,7 +90,7 @@ class RegionProposalNetwork(nn.Module):
         mode="training"):
     
         super(RegionProposalNetwork, self).__init__()
-        self.anchor_base = generate_anchor_base(anchor_scales, ratios)
+        self.anchor_base = generate_anchor_base(anchor_scales=anchor_scales, ratios= ratios)
         n_anchors = self.anchor_base.shape[0]
 
         self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1)
