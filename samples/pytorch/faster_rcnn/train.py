@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import datetime
 
+from torch import nn
 from dataset import FasterRCNNDataSet
 from utils import get_classes
 from utils import LossHistory
@@ -36,7 +37,20 @@ class FasterRCNNTrainer(nn.Module):
         self.proposal_target_creator = ProposalTargetCreator()
 
         self.loc_normalize_std = [0.1, 0.1, 0.2, 0.2]
-        
+
+
+    def _fast_rcnn_loc_loss(self, loc_pred, gt_loc, gt_label,sigma):
+        # where gt_label is 1
+        pred_loc = pred_loc[gt_label > 0]
+        gt_loc = gt_loc[gt_label > 0]
+        sigma_squared = torch.pow(sigma, 2)
+
+        # for all with right gt_label
+        reg_diff = (gt_loc - pred_loc)
+        # l1 loss
+        reg_diff = reg_diff.abs().float()
+        reg_loss = torch.where()
+
 
 def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iter, warmup_iter_ratio=0.05, 
                      warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num =10):
