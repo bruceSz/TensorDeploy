@@ -112,3 +112,58 @@ def loc2box(anchor, loc):
 
     return dst_bbox
 
+
+
+import numpy as np
+
+class EvalCallback(object):
+    def __init__(self, net, input_shape, class_names, num_classes, val_lines, log_dir, cuda\
+                 ,map_out="./tmp_out", max_boxes = 100, confi=0.05, nms_iou=0.5\
+                 , letterbox=True, MIN_OVERLAP=0.5, eval_flag=True, period=1 ):
+        super(EvalCallback, self).__init__()
+
+        self.net = net
+        self.input_shape = input_shape
+        self.class_names = class_names
+        self.num_classes = num_classes
+        self.val_lines = val_lines
+        self.log_dir = log_dir
+        self.cuda = cuda
+        self.map_out = map_out
+        self.max_boxes = max_boxes
+        self.confidence = confi
+        self.nms_iou = nms_iou
+        self.letterbox_img = letterbox
+        self.MIN_OVERLAP = MIN_OVERLAP
+        self.eval_flag = eval_flag
+        self.period = period
+
+
+        self.std = torch.Tensor([0.1, 0.1, 0.2, 0.2]).repeat(self.num_classes + 1)
+        if self.cuda:
+            self.std = self.std.cuda()
+        self.bbox_util = DecodeBox(self.std, self.num_classes)
+
+        self.maps = [0]
+        self.epoches = [0]
+        
+        if self.eval_flag:
+            with open(os.path.join(self.log_dir, "epoch_loss.txt"), 'a') as f:
+                f.write(str(0))
+                f.write("\n")
+
+    def get_map_txt(self, img_id, img, class_names, map_out):
+        f = open(os.path.join(map_out, "det-results/"+img_id+".txt"), 'w')
+
+        img_shape = np.array(np.shape(img)[0:2])
+        input_shape = get_new_img_size(img_shape[0],  img_shape[1])
+
+        img = cvtColor(img)
+
+        # resize  to width == 600
+        img_data = resize_img(img, [input_shape[1], input_shape[0]])
+
+        # add batch dimension
+        image_data = np.expand_dims(np.transpose(preprocess_input(np.array(img_data, dtype='float32')) , (2,0,1)),0)
+
+        # ready to predict.

@@ -146,15 +146,15 @@ class FasterRCNNDataSet(Dataset):
                                
 
         
-    def frcnn_dataset_collate(batch):
-        images = []
-        bboxes = []
-        labels = []
+def frcnn_dataset_collate(batch):
+    images = []
+    bboxes = []
+    labels = []
 
-        for img, box, label in batch:
-            images.append(img)
-            bboxes.append(box)
-            labels.append(label)
-        images = torch.from_numpy(np.array(images))
+    for img, box, label in batch:
+        images.append(img)
+        bboxes.append(box)
+        labels.append(label)
+    images = torch.from_numpy(np.array(images))
 
-        return images, bboxes, labels
+    return images, bboxes, labels
