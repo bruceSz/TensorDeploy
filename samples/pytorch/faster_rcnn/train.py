@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# refer: https://github.com/bubbliiiing/faster-rcnn-pytorch/blob/6cf39bf75d95975210e9b6f94cad691b330fee90/utils/callbacks.py#L79
 import sys
 import math
 import os
