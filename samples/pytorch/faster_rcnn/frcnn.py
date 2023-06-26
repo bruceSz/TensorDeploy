@@ -50,8 +50,9 @@ class FasterRCNN(nn.Module):
             ft_map = self.extractor(x)
             return ft_map
         elif mode == "rpn":
-            ft_map = self.extractor(x)
-            img_size = x.shape[2:]
+            assert(type(x) == type([]))
+            #ft_map = self.extractor(x)
+            ft_map, img_size = x
             rpn_locs, rpn_scores, rois, rois_indices, anchor = self.rpn.forward(ft_map, img_size, scale)
 
         elif mode == "head":
@@ -60,6 +61,8 @@ class FasterRCNN(nn.Module):
             roi_cls_locs, roi_scores = self.head(ft_map, rois, rois_indices,img_size)
 
             return roi_cls_locs, roi_scores
+        else:
+            raise NotImplementedError
         
 
     def freeze_bn(self):

@@ -9,7 +9,7 @@ from torchvision.ops import RoIPool
 from utils import normal_init
 class BottleNeck(nn.Module):
     expansion = 4
-    def __init__(self, in_planes, planes, stride=1, downsample=False):
+    def __init__(self, in_planes, planes, stride=1, downsample=None):
         super(BottleNeck, self).__init__()
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1,stride=stride , bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -38,8 +38,8 @@ class BottleNeck(nn.Module):
         out = self.conv3(out)
         out = self.bn3(out)
         if self.downsample is not None:
-            residual = self.downsample(x)
-        out += residual
+            res = self.downsample(x)
+        out += res
         out = self.relu(out)
 
         return out

@@ -4,6 +4,7 @@
 import sys
 import math
 import os
+from tqdm import tqdm
 from functools import partial
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -11,6 +12,9 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+
+from torch.nn import functional as F
+
 
 
 
@@ -22,6 +26,7 @@ from dataset import FasterRCNNDataSet
 from dataset import frcnn_dataset_collate
 from utils import get_classes
 from utils import LossHistory
+from utils import EvalCallback
 
 from common.utils import weights_init
 
@@ -36,9 +41,15 @@ def bbox_iou(anchor, bbox):
     # based on broadcast mechanism, anchor will compare with each bbox
     # 1. for tl  , we select maximum of each of anchor and bbox
     # 2. for br , we select minimum of each of anchor and bbox
+
+    print("shape of anchor: ", anchor.shape)
+    print("shape of bbox: ", bbox.shape)
     tl = np.maximum(anchor[:,None, :2], bbox[:,:2])
     br = np.minimum(anchor[:,None, 2:], bbox[:,2:])
 
+
+    print("shape of tl: ", tl.shape)
+    print("shape of br: ", br.shape)
     # br.x - tl.x, br.y - tl.y,
     # prod of axis==2 will, reduce axis==2 and get the area.
     # select with `all` 
@@ -240,7 +251,11 @@ class FasterRCNNTrainer(nn.Module):
         self.loc_normalize_std = [0.1, 0.1, 0.2, 0.2]
 
 
-    def _fast_rcnn_loc_loss(self, loc_pred, gt_loc, gt_label,sigma):
+
+    def _fast_rcnn_loc_loss(self, pred_loc, gt_loc, gt_label,sigma):
+        """
+           loss: `smoth - l1` 
+        """
         # where gt_label is 1
         pred_loc = pred_loc[gt_label > 0]
         gt_loc = gt_loc[gt_label > 0]
@@ -250,49 +265,295 @@ class FasterRCNNTrainer(nn.Module):
         reg_diff = (gt_loc - pred_loc)
         # l1 loss
         reg_diff = reg_diff.abs().float()
-        reg_loss = torch.where()
+        reg_loss = torch.where(
+            reg_diff < (1./sigma_squared),
+            0.5 * sigma_squared * reg_diff **2,
+            reg_diff - 0.5 / sigma_squared            
+        )
+        regression_loss = reg_loss.sum()
+        num_pos = (gt_label> 0).sum().float()
+
+        # max normalization
+        regression_loss /= torch.max(num_pos, torch.ones_like(num_pos))
+
+        return regression_loss
+
+    def forward(self, imgs, bboxes, labels, scale):
+        n = imgs.shape[0]
+        img_size = imgs.shape[2:]
+
+        assert(self.model is not None)
+        print("type of model", type(self.model))
+
+        base_ft = self.model(imgs, mode='extract')
+
+        # get 
+        assert(base_ft is not None)
+        rpn_locs, rpn_scores, rois, roi_indices, anchor = self.model(x = [base_ft, img_size], scale=scale, mode='rpn')
+
+        rpn_loc_loss_all, rpn_cls_loss_all, roi_loc_loss_all, roi_cls_loss_all = \
+            0, 0, 0, 0
+    
+        sample_rois, sample_indexes,  gt_roi_locs, gt_roi_labels = [], [], [], []
+
+        for i in range(n):
+            bbox = bboxes[i]
+            label = labels[i]
+            rpn_loc = rpn_locs[i]
+            rpn_score = rpn_scores[i]
+            roi = rois[i]
+
+            # compute gt box and rpn box  to get pred result.
+
+            # gt_rpn_loc [num_anchors, 4]
+            # gt_rpn_label [num_anchors, ]
+
+            # TODO? why only use anchor[0]
+            gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(bbox, anchor[0].cpu().numpy())
+            gt_rpn_loc = torch.from_numpy(gt_rpn_loc).type_as(rpn_locs)
+            gt_rpn_label = torch.from_numpy(gt_rpn_label).type_as(rpn_locs).long()
+
+            # compute proposal box 's regression and classification score.
+            rpn_loc_loss = self._fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc,gt_rpn_label, self.rpn_sigma)
+            rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label, ignore_index=-1) 
 
 
-def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iter, warmup_iter_ratio=0.05, 
-                     warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num =10):
-    def yolox_warm_cos_lr(lr, min_lr, total_iter, warmup_total_iter, warmup_lr_start,
-                          no_aug_iter, iters):
-        if iters <= warmup_total_iter:
-            lr = (lr - warmup_lr_start) / pow(iters/float(warmup_total_iter),2) + warmup_total_iter*warmup_lr_start
-        elif iters >= total_iter - no_aug_iter:
-            lr = min_lr
+            rpn_loc_loss_all += rpn_loc_loss
+            rpn_cls_loss_all += rpn_cls_loss
+
+
+            # use gt box and proposal box to get classification results
+            # sample_roi = [n_sample,]
+            # gt_roi_loc = [n_sample,4]
+            # gt_roi_label = [n_sample,]
+
+            sample_roi, gt_roi_loc, gt_roi_label = self.proposal_target_creator(roi, bbox, label, self.loc_normalize_std)
+            sample_rois.append(torch.Tensor(sample_roi).type_as(rpn_locs))
+            sample_indexes.append(torch.ones(len(sample_roi)).type_as(rpn_locs) * roi_indices[i][0])
+            gt_roi_locs.append(torch.Tensor(gt_roi_loc).type_as(rpn_locs))
+            gt_roi_labels.append(torch.Tensor(gt_roi_label).type_as(rpn_locs).long())
+
+        sample_rois = torch.stack(sample_rois,dim=0)
+        sample_indexes = torch.stack(sample_indexes,dim=0)
+
+        roi_cls_locs, roi_scores = self.model_train([base_ft, sample_rois,sample_indexes, img_size], mode='head')
+
+        for i in range(n):
+            # fetch regression result according to proposal box's type
+            n_sample = roi_cls_locs.size()[1]
+
+            roi_cls_loc = roi_cls_locs[i]
+            roi_score = roi_scores[i]
+            gt_roi_loc = gt_roi_locs[i]
+            gt_roi_label = gt_roi_labels[i]
+
+            roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
+            roi_loc = roi_cls_loc[torch.range(0, n_sample), gt_roi_label]
+
+
+            roi_loc_loss = self._fast_rcnn_loc_loss(roi_loc, gt_roi_loc, gt_roi_label.data, self.roi_sigma)
+            roi_cls_loss = nn.CrossEntropyLoss()(roi_score, gt_roi_label)
+
+            roi_loc_loss_all += roi_loc_loss
+            roi_cls_loss_all += roi_cls_loss
+
+        losses = [rpn_loc_loss_all/n, rpn_cls_loss_all/n, roi_loc_loss_all/n, roi_cls_loss_all/n]
+        losses = losses + [sum(losses)]
+
+        return losses
+
+    def train_step(self, imgs, bboxes, labels, scale, fp16=False, scaler = None):
+        self.optimizer.zero_grad()
+        if not fp16:
+            losses = self.forward(imgs, bboxes, labels, scale)
+            losses[-1].backward()
+            self.optimizer.step()
 
         else:
-            lr = min_lr + 0.5 * (lr - min_lr) * (
-                1.0 + math.cos(math.pi * (iters - warmup_total_iter)/(total_iter - warmup_total_iter - no_aug_iter - no_aug_iter)))
-        return lr
+            from torch.cuda.amp import autocast
+            with autocast():
+                losses = self.forward(imgs, bboxes, labels, scale)
+            
+            scaler.scale(losses[-1]).backward()
+            scaler.step(self.optimizer)
+            scaler.update()
+        return losses
+
+
+                               
+        
+
+
+
+# def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iter, warmup_iter_ratio=0.05, 
+#                      warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num =10):
+
+
+#     print("get lr scheduler: decay_type: %d, lr: %d , min_lr: %d, total_iter : %d"%(lr_decay_type, lr, min_lr, total_iter))
+#     def yolox_warm_cos_lr(lr, min_lr, total_iter, warmup_total_iter, warmup_lr_start,
+#                           no_aug_iter, iters):
+#         if iters <= warmup_total_iter:
+#             lr = (lr - warmup_lr_start) / pow(iters/float(warmup_total_iter),2) + warmup_total_iter*warmup_lr_start
+#         elif iters >= total_iter - no_aug_iter:
+#             lr = min_lr
+
+#         else:
+#             lr = min_lr + 0.5 * (lr - min_lr) * (
+#                 1.0 + math.cos(math.pi * (iters - warmup_total_iter)/(total_iter - warmup_total_iter - no_aug_iter - no_aug_iter)))
+#         return lr
     
+#     def step_lr(lr, decay_rate, step_size, iters):
+#         if step_lr < 1:
+#             raise ValueError("step_lr must be greater than 1")
+#         n = iters// step_size
+#         out_lr = lr * decay_rate **n
+#         return out_lr
+    
+#     if lr_decay_type == 'cos':
+#         warmup_total_iters = min(max(warmup_iter_ratio * total_iter, 1), 3)
+#         warmup_lr_start = max(warmup_lr_ratio * lr, 1e-6)
+
+#         no_aug_iter = min(max(no_aug_iter_ratio * total_iter, 1), 15)
+
+#         func = partial(yolox_warm_cos_lr, lr, min_lr, total_iter,warmup_total_iters,warmup_lr_start, no_aug_iter)
+
+#     else:
+#         decay_rate = (min_lr/ lr ) ** (1/(step_num -1))
+#         step_size = total_iter//step_num
+#         func = partial(step_lr, lr, decay_rate, step_size)
+    
+#     return func
+#             #lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iter, eta_min=min_lr)
+
+def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iters,warmup_iters_ratio=0.05,
+                    warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num=10):
+
+    print("get lr scheduler: decay_type: %s, lr: %d , min_lr: %d, total_iter : %d"%(lr_decay_type, lr, min_lr, total_iters))
+    def yolox_warm_cos_lr(lr, min_lr, total_iters, warmup_total_iters, warmup_lr_start,no_aug_iter, iters):
+
+        print("under yolox_warm_cos_lr: warmup_total_iters: %d, iters: %d"%(warmup_total_iters, iters))
+
+        if iters <= warmup_total_iters:
+            lr = (lr- warmup_lr_start) / pow((iters+1)/float(warmup_total_iters),2) + warmup_lr_start
+        elif iters >= total_iters - no_aug_iter:
+            lr = min_lr
+        else:
+            lr = min_lr + 0.5 * (lr - min_lr) * (
+                1.0 + math.cos(math.pi * (iters - warmup_total_iters)/(total_iters - warmup_total_iters -no_aug_iter)))
+        return lr
+
     def step_lr(lr, decay_rate, step_size, iters):
-        if step_lr < 1:
-            raise ValueError("step_lr must be greater than 1")
+        if step_size < 1:
+            raise ValueError("step_size must be greater than 1")
+
         n = iters// step_size
         out_lr = lr * decay_rate **n
         return out_lr
-    
+
     if lr_decay_type == 'cos':
-        warmup_total_iters = min(max(warmup_iter_ratio * total_iter, 1), 3)
+        warmup_total_iters = min(max(warmup_iters_ratio * total_iters, 1), 3)
         warmup_lr_start = max(warmup_lr_ratio * lr, 1e-6)
-
-        no_aug_iter = min(max(no_aug_iter_ratio * total_iter, 1), 15)
-
-        func = partial(yolox_warm_cos_lr, lr, min_lr, total_iter,warmup_total_iters,warmup_lr_start, no_aug_iter)
+        no_aug_iter = min(max(no_aug_iter_ratio * total_iters, 1), 15)
+        func = partial(yolox_warm_cos_lr, lr, min_lr, total_iters, warmup_total_iters, warmup_lr_start, no_aug_iter)
 
     else:
-        decay_rate = (min_lr/ lr ) ** (1/(step_num -1))
-        step_size = total_iter//step_num
+        decay_rate = (min_lr/ lr) ** ( 1/ (step_num-1))
+        step_size = total_iters//step_num
         func = partial(step_lr, lr, decay_rate, step_size)
-    
+
     return func
-            #lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iter, eta_min=min_lr)
+
+
+def set_optimizer_lr(optimizer, lr_scheduler_func, epoch):
+    lr = lr_scheduler_func( epoch)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
+def fit_one_epoch(model, train_util, loss_history, eval_callback,
+                optimizer, epoch, epoch_step, epoch_step_val, 
+                gen, gen_val, Epoch , cuda, fp16, scaler, save_period, save_dir):
+    total_loss = 0
+    rpn_loc_loss = 0
+    rpn_cls_loss = 0
+    roi_loc_loss = 0
+    roi_cls_loss = 0
+
+
+    val_loss = 0
+    print("start train")
+
+    with tqdm(total = epoch_step, desc =f'Epoch {epoch + 1}/{Epoch}', postfix=dict, mininterval=0.3 ) as pbar:
+        for iteration, batch in enumerate(gen):
+            if iteration >= epoch_step:
+                break
+            images, boxes, labels = batch[0], batch[1], batch[2]
+            with torch.no_grad():
+                if cuda:
+                    images = images.cuda()
+
+            
+            rpn_loc, rpn_cls, roi_loc, roi_cls, total = train_util.train_step(images, boxes, labels, 1, fp16, scaler)
+            total_loss += total.item()
+            rpn_loc_loss += rpn_loc.item()
+            rpn_cls_loss += rpn_cls.item()
+            roi_loc_loss += roi_loc.item()
+            roi_cls_loss += roi_cls.item()
+
+            pbar.set_postfix(**{
+                'total_loss': total_loss / (iteration + 1),
+                'rpn_loc' : rpn_loc_loss / (iteration + 1),
+                'rpn_cls' : rpn_cls_loss / (iteration + 1),
+                'roi_loc' : roi_loc_loss / (iteration + 1),
+                'roi_cls' : roi_cls_loss / (iteration + 1),
+                'lr' : get_lr(optimizer)
+            })
+
+            pbar.update(1)
+    print("end train")
+    print("start eval")
+    with tqdm(total= epoch_step_val, desc =f'Epoch {epoch + 1}/{Epoch}', postfix=dict,mininterval=0.3) as pbar:
+        for iter, batch in enumerate(gen_val):
+            if iter >= epoch_step_val:
+                break
+            images, boxes, labels = batch[0], batch[1], batch[2]
+            with torch.no_grad():
+                if cuda:
+                    images = images.cuda()
+                optimizer.zero_grad()
+                _, _, _, _, val_total = utils.forward(images, boxes, labels, 1)
+                val_loss += val_total.item()
+
+                pbar.set_postfix(**{
+                    'val_loss': val_loss / (iter + 1)
+                })
+                pbar.update(1)
+    print("finish validation")
+    loss_history.append_loss(epoch+1, total_loss/epoch_step, val_loss/epoch_val_step)
+    eval_callback.on_epoch_end(epoch+1 )
+    print("Epoch: " + str(epoch+1) + "/" + str(Epoch))
+    print("Total Loss: %.3f || Val loss: %.3f" % (total_loss/epoch_step, val_loss/epoch_step_val))
+
+    if (epoch+1) % save_period == 0 or epoch+1 == Epoch:
+        
+        torch.save(model.state_dict(), os.path.join(save_dir, "ep%03d-loss%.3f-valloss%.3f.pth"%(epoch+1, total_loss/epoch_step, val_loss/epoch_step_val)))
+    
+   # if (len(loss_history.val_loss) <= 1):
+    if len(loss_history.val_loss) <= 1 or (val_loss / epoch_step_val) <= min(loss_history.val_loss):
+        # 
+        print("save best model to best_epoch_weights.pth")
+        torch.save(model.state_dict(), os.path.join(save_dir, "best_epoch_weights.pth"))
+
+    torch.save(model.state_dict(), os.path.join(save_dir, "last_epoch_weights.pth"))
+
 
 def train():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+    # multi-gpu training
+    Cuda = False
 
     fp16 = False
 
@@ -393,9 +654,11 @@ def train():
 
 
     model_train  = model.train()
+    print("model type: ", type(model))
+    print('model_train type: ', type(model_train))
 
     # for cuda, using this branch.
-    if False:
+    if Cuda:
         model_train = torch.nn.DataParallel(model_train)
 
         cudnn.benchmark  = True
@@ -462,13 +725,13 @@ def train():
         }[optimizer_type]
 
 
-        lr_scheduler = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, unfreeze_epoch)
+        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, unfreeze_epoch)
 
         epoch_step = num_train//batch_size
-        epoch_val_step = num_val//batch_size
+        epoch_step_val = num_val//batch_size
 
 
-        if epoch_step ==0 or epoch_val_step ==0:
+        if epoch_step ==0 or epoch_step_val ==0:
             raise ValueError("dataset is too  small for training")
         
         train_dataset = FasterRCNNDataSet(train_lines, input_shape, train=True)
@@ -481,13 +744,51 @@ def train():
         gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
                              pin_memory=True,drop_last =True, collate_fn=frcnn_dataset_collate)
         
-        train_util = FasterRCNNTrainer(model, optimizer)
-        eval_callback  = EvalCallback(model, input_shape, class_names, num_classes,
-                                      val_lines, log_dir, True, eval_flag=eval_flag, period=eval_period)
+        print("train model is: ", type(model_train))
+        train_util = FasterRCNNTrainer(model_train, optimizer)
+        eval_callback  = EvalCallback(model_train, input_shape, class_names, num_classes,
+                                      val_lines, log_dir, Cuda, eval_flag=eval_flag, period=eval_period)
         
 
         for epoch in range(init_epoch, unfreeze_epoch):
-            pass
+            if epoch >= freeze_epoch and not UnFreeze_flag and Freeze_Train:
+                batch_size = unfreeze_batch_size
+
+                nbs = 16
+                lr_limit_max = 1e-4 if optimizer_type == "sgd" else 5e-2
+                lr_limit_min = 1e-4 if optimizer_type == "sgd" else 5e-4
+
+                Init_lr_fit = min(max(batch_size/nbs * init_lr, lr_limit_min), lr_limit_max)
+                Min_lr_fit = min(max(batch_size/nbs * min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
+
+
+                lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, Unfreeze_epoch)
+                assert(lr_scheduler_func is not None)
+
+                for param in models.extractor.parameters():
+                    param.requires_grad = True
+
+                model.freeze_bn()
+                epoch_step = num_train//batch_size
+                epoch_step_val = num_val//batch_size
+
+                if epoch_step ==0 or epoch_step_val == 0:
+                    raise ValueError("dataset is too  small for training")
+                gen = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                                    drop_last=True, collate_fn=frcnn_dataset_collate)
+
+                gen_val = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,ping_memory=True,
+                                    drop_last=True, collate_fn=frcnn_dataset_collate)
+
+
+                UnFreeze_flag = True
+
+            set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
+
+
+            fit_one_epoch(model, train_util, loss_his, eval_callback, optimizer, epoch, epoch_step ,epoch_step_val, gen, gen_val, unfreeze_epoch, Cuda, fp16, scaler, save_period, save_dir)
+
+        loss_history.writer.close()
 
     
 

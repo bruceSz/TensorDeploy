@@ -13,6 +13,12 @@ def cvtColorGaurd(image):
         image = image.convert('RGB')
         return image
 
+
+
+def preprocess_image(image):
+    image /= 255.0
+    return image
+
 class FasterRCNNDataSet(Dataset):
     def __init__(self, annotation_lines, input_shape=[600, 600], train=True) -> None:
         #
@@ -28,9 +34,21 @@ class FasterRCNNDataSet(Dataset):
 
     def __getitem__(self, index):
         index = index % self.len
+        print("index is: %d , total is: %d" % ( index, self.len))
 
+        
 
-        image, y  = self.get_random_image(self.annotation_lines[index],self.input_shape[0:2], ramdom=self.train)
+        image, y  = self.get_random_image(self.annotation_lines[index],self.input_shape[0:2], random=self.train)
+        # transpose to chw, where  c == 3 after preprocessed.
+        # 
+        image = np.transpose(preprocess_image(np.array(image, dtype=np.float32)),(2,0,1))
+        box_data  = np.zeros((len(y), 5))
+        if len(y) > 0:
+            box_data[:len(y),:] = y
+
+        box = box_data[:,:4]
+        label = box_data[:,4]
+        return image, box, label
 
     def shuffle_box(self, box, dx, dy, nw, nh, iw, ih, w, h, flip=False):
         assert(len(box) > 0)
@@ -46,6 +64,9 @@ class FasterRCNNDataSet(Dataset):
         box_h = box[:,3] - box[:,1]
         box = box[np.logical_and(box_w>1, box_h>1)]
         return box
+
+    def rand(self, a=0, b=1):
+        return np.random.rand() * (b-a) + a
 
     def get_random_image(self, annotation_line, input_shape, random=True, jitter=0.3,
                          hue=0.1,sat=0.7, val=0.4):
@@ -127,7 +148,7 @@ class FasterRCNNDataSet(Dataset):
 
         hue, sat, val = cv2.split(cv2.cvtColor(img_data,cv2.COLOR_BGR2HSV))
 
-        dtype = image_data.dtype
+        dtype = img_data.dtype
 
         x = np.arange(0,256, dtype=dtype)
         lut_hue = ((x * r[0]) %180).astype(dtype)
@@ -138,7 +159,7 @@ class FasterRCNNDataSet(Dataset):
         image_data = cv2.cvtColor(image_data, cv2.COLOR_HSV2BGR)
 
         if len(box) >0:
-            self.shuffle_box(dx,dy,nw,nh, iw, ih, w, h, flip=flip)
+            self.shuffle_box(box,dx,dy,nw,nh, iw, ih, w, h, flip=flip)
 
         return image_data, box
 

@@ -11,6 +11,7 @@ import numpy as np
 from anchors  import generate_anchor_base, _compute_all_shifted_anchors
 from utils import loc2box
 from utils import normal_init
+
 class ProposalCreator(object):
     def __init__(self,
                  mode, 
@@ -36,18 +37,22 @@ class ProposalCreator(object):
         if self.mode == "training":
             pre_nms_top_n = self.n_train_pre_nms
             post_nms_top_n = self.n_train_post_nms
-        elif self.mode == "test":
+        #elif self.mode == "test":
+        else:
             pre_nms_top_n = self.n_test_pre_nms
             post_nms_top_n = self.n_test_post_nms
-        else:
-            raise ValueError("Unknown mode: {}".format(self.mode))
+        # else:
+        #     raise ValueError("Unknown mode: {}".format(self.mode))
 
         anchor = torch.from_numpy(anchor).type_as(loc)
+
+        # transform rpn prediction into roi bbox
         roi = loc2box(anchor, loc)
+        print("output roi shape: {}".format(roi.shape))
         # clamp x
-        roi[:, [0,2]] = torch.clamp(roi[:[0,2]], min=0, max=img_size[1])
+        roi[:, [0,2]] = torch.clamp(roi[:,[0,2]], min=0, max=img_size[1])
         # clamp y
-        roi[:, [1,3]] = torch.clamp(roi[:[1,3]], min=0, max=img_size[0])
+        roi[:, [1,3]] = torch.clamp(roi[:,[1,3]], min=0, max=img_size[0])
 
         min_size = self.min_size * scale
         # return of torch.where is a tuple with len == 1
@@ -57,13 +62,20 @@ class ProposalCreator(object):
         # only keep bbox above size threshold
         # only keep score corresponding to above boxes.
         roi = roi[keep,:]
+        print("shape of roi after keep filter: ", roi.shape)
         score = score[keep]
-
+        
+        print("score shape: ", score.shape)
         order = torch.argsort(score, descending=True)
+        print("shape of order: ", order.shape)
         if pre_nms_top_n > 0:
             order = order[:pre_nms_top_n]
 
         roi = roi[order,:]
+        #roi = roi.reshape(-1, 4)
+        print("shape of roi: ", roi.shape)
+        print("pre_nms_top_n is: ", pre_nms_top_n)
+        print("shape of order is: ", order.shape)
         score = score[order]
 
         keep = nms(roi, score, self.nms_iou)
@@ -121,7 +133,11 @@ class RegionProposalNetwork(nn.Module):
 
         rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
         rpn_fg_scores = rpn_softmax_scores[:, :, 1]
-        rpn_fg_scores = rpn_fg_scores.view(n, -1, 1)
+        print("before contiguous", rpn_scores.shape)
+        rpn_fg_scores  = rpn_fg_scores.contiguous()
+        print("after contiguous", rpn_scores.shape)
+
+        rpn_fg_scores = rpn_fg_scores.view(n, -1)
         # shape of anchor : (feat_h * feat_w * 9 , 4)
         anchor = _compute_all_shifted_anchors(np.array(self.anchor_base), self.feat_stride, h, w)
         rois = list()
