@@ -90,7 +90,7 @@ class ResNet(nn.Module):
 
         # h, w, c -> h/2, w/2, c*2
         # 38 * 38 * 1024 -> 19 * 19 * 2048
-        # 32x32x1024 -> 16x16x2048
+        # 32x32x1024 -> 16x16x2048 [centernet]
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         self.avgpool =  nn.AvgPool2d(7)
