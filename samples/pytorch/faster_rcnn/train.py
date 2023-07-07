@@ -27,6 +27,7 @@ from dataset import frcnn_dataset_collate
 from utils import get_classes
 from utils import LossHistory
 from utils import EvalCallback
+from utils import init_model
 
 from common.utils import weights_init
 
@@ -42,14 +43,14 @@ def bbox_iou(anchor, bbox):
     # 1. for tl  , we select maximum of each of anchor and bbox
     # 2. for br , we select minimum of each of anchor and bbox
 
-    print("shape of anchor: ", anchor.shape)
-    print("shape of bbox: ", bbox.shape)
+    #print("shape of anchor: ", anchor.shape)
+    #print("shape of bbox: ", bbox.shape)
     tl = np.maximum(anchor[:,None, :2], bbox[:,:2])
     br = np.minimum(anchor[:,None, 2:], bbox[:,2:])
 
 
-    print("shape of tl: ", tl.shape)
-    print("shape of br: ", br.shape)
+    #print("shape of tl: ", tl.shape)
+    #print("shape of br: ", br.shape)
     # br.x - tl.x, br.y - tl.y,
     # prod of axis==2 will, reduce axis==2 and get the area.
     # select with `all` 
@@ -76,7 +77,7 @@ def bbox2loc(src_bbox, dst_bbox):
     width = np.maximum(width, eps)
     height = np.maximum(height, eps)
 
-    # compute center distance scalled by width and height
+    # compute center distance scaled by width and height
     dx = (base_ctr_x - ctr_x) / width
     dy = (base_ctr_y - ctr_y) / height
     dw = np.log(base_width / width)
@@ -176,6 +177,7 @@ class ProposalTargetCreator(object):
                  neg_iou_threshold_high=0.5,neg_iou_threshold_low=0):
         self.n_sample = n_sample
         self.pos_ratio = pos_ratio
+        self.pos_roi_per_img = np.round(self.n_sample * self.pos_ratio)
         self.pos_iou_threshold = pos_iou_threshold
         self.neg_iou_threshold_high = neg_iou_threshold_high
         self.neg_iou_threshold_low = neg_iou_threshold_low
@@ -259,11 +261,12 @@ class FasterRCNNTrainer(nn.Module):
         # where gt_label is 1
         pred_loc = pred_loc[gt_label > 0]
         gt_loc = gt_loc[gt_label > 0]
-        sigma_squared = torch.pow(sigma, 2)
+        sigma_squared = sigma ** 2#torch.pow(sigma, 2)
 
         # for all with right gt_label
         reg_diff = (gt_loc - pred_loc)
         # l1 loss
+        #TODO? understand this.
         reg_diff = reg_diff.abs().float()
         reg_loss = torch.where(
             reg_diff < (1./sigma_squared),
@@ -281,6 +284,7 @@ class FasterRCNNTrainer(nn.Module):
     def forward(self, imgs, bboxes, labels, scale):
         n = imgs.shape[0]
         img_size = imgs.shape[2:]
+        print("--- img size is: ", img_size)
 
         assert(self.model is not None)
         print("type of model", type(self.model))
@@ -308,7 +312,7 @@ class FasterRCNNTrainer(nn.Module):
             # gt_rpn_loc [num_anchors, 4]
             # gt_rpn_label [num_anchors, ]
 
-            # TODO? why only use anchor[0]
+            #
             gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(bbox, anchor[0].cpu().numpy())
             gt_rpn_loc = torch.from_numpy(gt_rpn_loc).type_as(rpn_locs)
             gt_rpn_label = torch.from_numpy(gt_rpn_label).type_as(rpn_locs).long()
@@ -336,7 +340,7 @@ class FasterRCNNTrainer(nn.Module):
         sample_rois = torch.stack(sample_rois,dim=0)
         sample_indexes = torch.stack(sample_indexes,dim=0)
 
-        roi_cls_locs, roi_scores = self.model_train([base_ft, sample_rois,sample_indexes, img_size], mode='head')
+        roi_cls_locs, roi_scores = self.model([base_ft, sample_rois,sample_indexes, img_size], mode='head')
 
         for i in range(n):
             # fetch regression result according to proposal box's type
@@ -348,7 +352,8 @@ class FasterRCNNTrainer(nn.Module):
             gt_roi_label = gt_roi_labels[i]
 
             roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
-            roi_loc = roi_cls_loc[torch.range(0, n_sample), gt_roi_label]
+            print(gt_roi_label.dtype)
+            roi_loc = roi_cls_loc[torch.arange(0, n_sample), gt_roi_label]
 
 
             roi_loc_loss = self._fast_rcnn_loc_loss(roi_loc, gt_roi_loc, gt_roi_label.data, self.roi_sigma)
@@ -469,6 +474,9 @@ def set_optimizer_lr(optimizer, lr_scheduler_func, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
 
 def fit_one_epoch(model, train_util, loss_history, eval_callback,
                 optimizer, epoch, epoch_step, epoch_step_val, 
@@ -521,7 +529,7 @@ def fit_one_epoch(model, train_util, loss_history, eval_callback,
                 if cuda:
                     images = images.cuda()
                 optimizer.zero_grad()
-                _, _, _, _, val_total = utils.forward(images, boxes, labels, 1)
+                _, _, _, _, val_total = train_util.forward(images, boxes, labels, 1)
                 val_loss += val_total.item()
 
                 pbar.set_postfix(**{
@@ -529,7 +537,7 @@ def fit_one_epoch(model, train_util, loss_history, eval_callback,
                 })
                 pbar.update(1)
     print("finish validation")
-    loss_history.append_loss(epoch+1, total_loss/epoch_step, val_loss/epoch_val_step)
+    loss_history.append_loss(epoch+1, total_loss/epoch_step, val_loss/epoch_step_val)
     eval_callback.on_epoch_end(epoch+1 )
     print("Epoch: " + str(epoch+1) + "/" + str(Epoch))
     print("Total Loss: %.3f || Val loss: %.3f" % (total_loss/epoch_step, val_loss/epoch_step_val))
@@ -610,41 +618,12 @@ def train():
     if not pretrained:
         weights_init(model)
     if model_path is not None:
-        assert(os.path.exists(model_path))
-        print("Loading model from {}".format(model_path))
-
-        model_dict = model.state_dict()
-        #  pre-trained weights
-        # this is dict from parameter name to tensor
-        pretrained_dict = torch.load(model_path, map_location=device)
+        init_model(model_path, model, device)
         
-        # for k in model_dict.keys():
-        #     print("model: ",k)
-
-        # for k in pretrained_dict.keys():
-        #     print("pretrained: ",k)
-        
-        
-        load_key, no_load_key, temp_dict = [], [],{}
-
-        for k,v in pretrained_dict.items():
-            if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
-                # k exist in model_dict and shape of v is same
-                temp_dict[k] = v
-                load_key.append(k)
-            else:
-                no_load_key.append(k)
-
-        model_dict.update(temp_dict)
-        # reload model_state.
-        model.load_state_dict(model_dict)
-        #print("updated dict: ",temp_dict.keys())
-        print("Loaded pre-trained weights from {}".format(model_path))
-        print("No pre-trained weights to load: {}".format(no_load_key))
         
     time_str = datetime.datetime.strftime(datetime.datetime.now(), '%Y_%m_%d_%H_%M_%S')
     log_dir = os.path.join(save_dir, "loss_" +time_str)
-    loss_his = LossHistory(log_dir, model, input_shape=input_shape)
+    loss_history = LossHistory(log_dir, model, input_shape=input_shape)
 
     if fp16:
         from torch.cuda.amp import GradScaler
@@ -750,8 +729,11 @@ def train():
                                       val_lines, log_dir, Cuda, eval_flag=eval_flag, period=eval_period)
         
 
+        print("init epoch is: ", init_epoch, " and unfreeze_epoch is: ", unfreeze_epoch)    
+        
+    
         for epoch in range(init_epoch, unfreeze_epoch):
-            if epoch >= freeze_epoch and not UnFreeze_flag and Freeze_Train:
+            if epoch >= freeze_epoch and not UnFreeze_flag and freeze_train:
                 batch_size = unfreeze_batch_size
 
                 nbs = 16
@@ -762,10 +744,10 @@ def train():
                 Min_lr_fit = min(max(batch_size/nbs * min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
 
 
-                lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, Unfreeze_epoch)
+                lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, unfreeze_epoch)
                 assert(lr_scheduler_func is not None)
 
-                for param in models.extractor.parameters():
+                for param in model.extractor.parameters():
                     param.requires_grad = True
 
                 model.freeze_bn()
@@ -785,8 +767,9 @@ def train():
 
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
 
-
-            fit_one_epoch(model, train_util, loss_his, eval_callback, optimizer, epoch, epoch_step ,epoch_step_val, gen, gen_val, unfreeze_epoch, Cuda, fp16, scaler, save_period, save_dir)
+            print("begin fit on epoch: ")
+            
+            fit_one_epoch(model, train_util, loss_history, eval_callback, optimizer, epoch, epoch_step ,epoch_step_val, gen, gen_val, unfreeze_epoch, Cuda, fp16, scaler, save_period, save_dir)
 
         loss_history.writer.close()
 

@@ -22,7 +22,7 @@ def generate_anchor_base(base_size=16, ratios = [0.5, 1, 2], anchor_scales = [8,
 
 def _compute_all_shifted_anchors(anchor_base, feat_stride, height, width):
     """
-        echo feature_map point map to a feat_stride * feat_stride grid in original image space,
+        each feature_map point map to a feat_stride * feat_stride grid in original image space,
 
         anchor_base: [9, 4], A ==9
         feat_stride: 16

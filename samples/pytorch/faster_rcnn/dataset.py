@@ -34,7 +34,7 @@ class FasterRCNNDataSet(Dataset):
 
     def __getitem__(self, index):
         index = index % self.len
-        print("index is: %d , total is: %d" % ( index, self.len))
+        #print("index is: %d , total is: %d" % ( index, self.len))
 
         
 
@@ -115,6 +115,7 @@ class FasterRCNNDataSet(Dataset):
                 # box = box[np.logical_and(box_w>1, box_h>1)]
 
             # return iamge_data (resized to input_shape) and normalized box
+            #print("----  output image_data shape: ", image_data.shape)
             return image_data, box
         # in random mode, we resize and change length or width of image.
         new_ar = iw/ih * self.rand(1-jitter, 1+jitter)/self.rand(1-jitter, 1+jitter)
@@ -161,6 +162,7 @@ class FasterRCNNDataSet(Dataset):
         if len(box) >0:
             self.shuffle_box(box,dx,dy,nw,nh, iw, ih, w, h, flip=flip)
 
+        print("---- random image_data shape: ", image_data.shape)
         return image_data, box
 
 
@@ -179,3 +181,31 @@ def frcnn_dataset_collate(batch):
     images = torch.from_numpy(np.array(images))
 
     return images, bboxes, labels
+
+def test():
+    train_anno_path = "data/voc/2007_train.txt"
+    train_lines = []
+    with open(train_anno_path, 'r') as f:
+        train_lines = f.readlines()
+    print("train lines: ", len(train_lines))
+    print("train samples:", train_lines[0])
+
+    input_shape = [600, 600]
+    train_dataset = FasterRCNNDataSet(train_lines, input_shape, train=True)
+
+    print("")
+    target_index = [15937, 4837, 14046]
+    for index in target_index:
+        img, box, label = train_dataset[index]
+        print("img shape: ", img.shape)
+        print("box shape: ", box)
+        print("label shape: ", label)
+        print("")
+
+
+# index is: 15937 , total is: 16551
+# index is: 4837 , total is: 16551
+# index is: 14046 , total is: 16551
+
+if __name__ == "__main__":
+    test()

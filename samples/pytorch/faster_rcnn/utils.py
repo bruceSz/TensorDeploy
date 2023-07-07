@@ -92,6 +92,7 @@ def loc2box(anchor, loc):
     src_c_x = torch.unsqueeze(anchor[:,0], -1) + 0.5 * src_width
     src_c_y = torch.unsqueeze(anchor[:,1], -1) + 0.5 * src_height
 
+    print("loc shape under loc2box: ", loc.shape)
     dx = loc[:, 0::4]
     dy = loc[:, 1::4]
     dw = loc[:, 2::4]
@@ -223,6 +224,39 @@ class DecodeBox(object):
         return results
 
 
+def init_model( model_path, model, device):
+    import os
+    assert(os.path.exists(model_path))
+    print("Loading model from {}".format(model_path))
+
+    model_dict = model.state_dict()
+    #  pre-trained weights
+    # this is dict from parameter name to tensor
+    pretrained_dict = torch.load(model_path, map_location=device)
+    
+    # for k in model_dict.keys():
+    #     print("model: ",k)
+
+    # for k in pretrained_dict.keys():
+    #     print("pretrained: ",k)
+    
+    
+    load_key, no_load_key, temp_dict = [], [],{}
+
+    for k,v in pretrained_dict.items():
+        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+            # k exist in model_dict and shape of v is same
+            temp_dict[k] = v
+            load_key.append(k)
+        else:
+            no_load_key.append(k)
+
+    model_dict.update(temp_dict)
+    # reload model_state.
+    model.load_state_dict(model_dict)
+    #print("updated dict: ",temp_dict.keys())
+    print("Loaded pre-trained weights from {}".format(model_path))
+    print("No pre-trained weights to load: {}".format(no_load_key))
 
 class EvalCallback(object):
     def __init__(self, net, input_shape, class_names, num_classes, val_lines, log_dir, cuda\
