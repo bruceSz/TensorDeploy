@@ -55,17 +55,17 @@ class TrainConfig(object):
         print("main model name {}, backbone name: {}".format(self.model_name, self.backbone_name))
 
         
-        model_info = ModelManager.get_model_infos(self.model_name)
-        self.shapes = [ model_info["input_shape"], model_info["output_shape"]]
+        self.model_info = ModelManager.get_model_infos(self.model_name)
+        #self.shapes = [ model_info["input_shape"], model_info["output_shape"]]
         #
 
         ds_mgr = DataSetMgr()
-        ds_proxy, self.collate_fn = ds_mgr.get_dataset(self.ds_name, self.shapes)
+        ds_proxy, self.collate_fn = ds_mgr.get_dataset(self.ds_name, self.model_info)
         self.class_names = ds_proxy.class_names
         self.num_classes = ds_proxy.num_classes
         self.train_dataset = self._get_train_ds()
         self.val_dataset = self._get_val_ds()
-        self.val_lines = self.val_dataset.annotation_lines
+        #self.val_lines = self.val_dataset.annotation_lines
 
 
         # if self.distributed:
@@ -101,8 +101,8 @@ class TrainConfig(object):
 
     def _get_ds(self, train):
         ds_mgr = DataSetMgr()
-        assert(self.shapes is not None)
-        ds,_ = ds_mgr.get_dataset(self.ds_name, self.shapes, train=True)
+        assert(self.model_info is not None)
+        ds,_ = ds_mgr.get_dataset(self.ds_name, self.model_info, train=True)
         #print("leng of ds: {} ".format(len(ds))
         #print("num of classes: {}".format(ds.num_classes)
         print("num of ds: {}".format(len(ds)))
@@ -233,7 +233,7 @@ class TrainConfig(object):
 
     def get_loss_history(self, model):
         if self.local_rank == 0:
-            return LossHistory(self.log_dir, model, input_shape=self.shapes[0])
+            return LossHistory(self.log_dir, model)
         else:
             return None
         

@@ -25,13 +25,160 @@ from torch import nn
 from dataset import FasterRCNNDataSet
 from dataset import frcnn_dataset_collate
 from utils import get_classes
-from utils import LossHistory
-from utils import EvalCallback
+from framework.train_helper import LossHistory
+#from samples.pytorch.framework.train_helper import EvalCallback
 from utils import init_model
 
+from framework import scheduler
+
 from common.utils import weights_init
+from faster_rcnn.utils import DecodeBox
 
 from frcnn import FasterRCNN
+
+class EvalCallbackFaster(object):
+    def __init__(self, net, input_shape, class_names, num_classes, val_lines, log_dir, cuda\
+                 ,map_out="./tmp_out", max_boxes = 100, confi=0.05, nms_iou=0.5\
+                 , letterbox=True, MIN_OVERLAP=0.5, eval_flag=True, period=1 ):
+        super(EvalCallbackFaster, self).__init__()
+
+        self.net = net
+        self.input_shape = input_shape
+        self.class_names = class_names
+        self.num_classes = num_classes
+        self.val_lines = val_lines
+        self.log_dir = log_dir
+        self.cuda = cuda
+        self.map_out = map_out
+        self.max_boxes = max_boxes
+        self.confidence = confi
+        self.nms_iou = nms_iou
+        self.letterbox_img = letterbox
+        self.MIN_OVERLAP = MIN_OVERLAP
+        self.eval_flag = eval_flag
+        self.period = period
+
+
+        self.std = torch.Tensor([0.1, 0.1, 0.2, 0.2]).repeat(self.num_classes + 1)
+        if self.cuda:
+            self.std = self.std.cuda()
+        self.bbox_util = DecodeBox(self.std, self.num_classes)
+
+        self.maps = [0]
+        self.epoches = [0]
+        
+        if self.eval_flag:
+            with open(os.path.join(self.log_dir, "epoch_loss.txt"), 'a') as f:
+                f.write(str(0))
+                f.write("\n")
+
+    def get_map_txt(self, img_id, img, class_names, map_out):
+        f = open(os.path.join(map_out, "det-results/"+img_id+".txt"), 'w')
+
+        # compute image height and width
+        img_shape = np.array(np.shape(img)[0:2])
+        # change to (600, width), or (height, 600)
+        input_shape = get_new_img_size(img_shape[0],  img_shape[1])
+
+        # cvt to rgb
+        img = cvtColor(img)
+
+        # resize  to width == 600
+        img_data = resize_img(img, [input_shape[1], input_shape[0]])
+
+        # add batch dimension
+        image_data = np.expand_dims(np.transpose(preprocess_input(np.array(img_data, dtype='float32')) , (2,0,1)),0)
+
+
+        # ready to predict.
+        with torch.no_grad():
+            images = torch.from_numpy(image_data)
+            if self.cuda:
+                images = images.cuda()
+            
+            roi_cls_locs, roi_scores, rois, _ = self.net(images)
+            # decode predictions
+            results = self.bbox_util.forward(roi_cls_locs, roi_scores,
+                                            image_shape,input_shape,
+                                            nms_iou=self.nms_iou,confidence=self.confidence)
+            if len(results[0]) <= 0:
+                return
+            top_label = np.array(results[0][:,5], dtype='int32')
+            top_conf = results[0][:,4]
+            top_boxes = results[0][:,:4]
+
+        top_100 = np.argsort(top_conf)[::-1][:self.max_boses]
+        top_boxes = top_boxes[top_100]
+        top_confi =   top_conf[top_100]
+        top_label = top_label[top_100]
+
+        for i, c in list(enumerate(top_label)):
+            pred_class = self.class_names[int(c)]
+            box = top_boxes[i]
+            score = str(top_confi[i])
+
+            top, left, bottom, right = box
+            if pred_class not in class_names:
+                continue
+            f.write("%s %s %s %s %s %s\n" % (pred_class,score[:6], str(int(left)), str(int(top)),str(int(right)), str(int(bottom))))
+
+        f.close()
+
+        return
+
+    def on_epoch_end(self, epoch):
+        if epoch % self.period ==0 and self.eval_flag:
+            if not os.path.exists(self.map_out):
+                os.makedirs(self.map_out)
+            if not os.path.exists(os.path.join(self.map_out, "ground-truth")):
+                os.makedirs(os.path.join(self.map_out, "ground-truth"))
+            if not os.path.exists(os.path.join(self.map_out, "det-results")):
+                os.makedirs(os.path.join(self.map_out, "det-results"))
+
+            print("gget map.")
+
+            for ann_line in tqdm(self.val_lines):
+                line = ann_line.strip().split()
+                img_id = os.path.basename(line[0])
+
+                img = Image.open(line[0])
+
+                gt_bboxes = np.array([np.array(list(map(int, box.split(',')))) for box in line[1:]])
+
+                self.get_map_txt(img_id, img, self.class_names, self.map_out)
+
+                with open(os.path.join(self.map_out, "ground-truth/"+img_id+".txt"), 'w') as f:
+                    for box in gt_bboxes:
+                        left, top, right, bottom, obj = box
+                        obj_name = self.class_names[obj]
+                        f.write("%s %s %s %s %s\n" % (obj_name, left, top, right, bottom))
+
+            print("calculate map.")
+        
+            try:
+                temp_map = get_coco_map(class_names = self.class_names, path = self.map_out)[1]
+            except:
+                temp_map = get_map(self.MINOVERLAP, False, path=self.map_out)
+
+            self.maps.append(temp_map)
+            self.epoches.append(epoch)
+
+            with open(os.path.join(self.log_dir, "epoch_map.txt"), 'a') as f:
+                f.write(str(temp_map))
+                f.write("\n")
+            plt.grid(True)
+            plt.xlabel("Epoch")
+            plt.ylabel("Map %s"%str(self.MINOVERLAP))
+            plt.title("A Map Curve")
+            plt.legend(loc='upper right')
+            
+            plt.savefig(os.path.join(self.log_dir, "epoch_map.png"))
+            plt.cla()
+            plt.close("all")
+
+            print("save map.")
+            shutil.rmtree(self.map_out)
+
 
 def bbox_iou(anchor, bbox):
     if anchor.shape[1] != 4 or bbox.shape[1] != 4:
@@ -430,43 +577,7 @@ class FasterRCNNTrainer(nn.Module):
 #     return func
 #             #lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iter, eta_min=min_lr)
 
-def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iters,warmup_iters_ratio=0.05,
-                    warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num=10):
 
-    print("get lr scheduler: decay_type: %s, lr: %d , min_lr: %d, total_iter : %d"%(lr_decay_type, lr, min_lr, total_iters))
-    def yolox_warm_cos_lr(lr, min_lr, total_iters, warmup_total_iters, warmup_lr_start,no_aug_iter, iters):
-
-        print("under yolox_warm_cos_lr: warmup_total_iters: %d, iters: %d"%(warmup_total_iters, iters))
-
-        if iters <= warmup_total_iters:
-            lr = (lr- warmup_lr_start) / pow((iters+1)/float(warmup_total_iters),2) + warmup_lr_start
-        elif iters >= total_iters - no_aug_iter:
-            lr = min_lr
-        else:
-            lr = min_lr + 0.5 * (lr - min_lr) * (
-                1.0 + math.cos(math.pi * (iters - warmup_total_iters)/(total_iters - warmup_total_iters -no_aug_iter)))
-        return lr
-
-    def step_lr(lr, decay_rate, step_size, iters):
-        if step_size < 1:
-            raise ValueError("step_size must be greater than 1")
-
-        n = iters// step_size
-        out_lr = lr * decay_rate **n
-        return out_lr
-
-    if lr_decay_type == 'cos':
-        warmup_total_iters = min(max(warmup_iters_ratio * total_iters, 1), 3)
-        warmup_lr_start = max(warmup_lr_ratio * lr, 1e-6)
-        no_aug_iter = min(max(no_aug_iter_ratio * total_iters, 1), 15)
-        func = partial(yolox_warm_cos_lr, lr, min_lr, total_iters, warmup_total_iters, warmup_lr_start, no_aug_iter)
-
-    else:
-        decay_rate = (min_lr/ lr) ** ( 1/ (step_num-1))
-        step_size = total_iters//step_num
-        func = partial(step_lr, lr, decay_rate, step_size)
-
-    return func
 
 
 def set_optimizer_lr(optimizer, lr_scheduler_func, epoch):
@@ -704,7 +815,7 @@ def train():
         }[optimizer_type]
 
 
-        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, unfreeze_epoch)
+        lr_scheduler_func = scheduler.get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, unfreeze_epoch)
 
         epoch_step = num_train//batch_size
         epoch_step_val = num_val//batch_size
@@ -725,7 +836,7 @@ def train():
         
         print("train model is: ", type(model_train))
         train_util = FasterRCNNTrainer(model_train, optimizer)
-        eval_callback  = EvalCallback(model_train, input_shape, class_names, num_classes,
+        eval_callback  = EvalCallbackFaster(model_train, input_shape, class_names, num_classes,
                                       val_lines, log_dir, Cuda, eval_flag=eval_flag, period=eval_period)
         
 

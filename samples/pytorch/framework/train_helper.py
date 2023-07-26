@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from matplotlib import pyplot as plt
 
 class LossHistory(object):
-    def __init__(self, log_dir, model, input_shape):
+    def __init__(self, log_dir, model ):#input_shape):
         self.log_dir  = log_dir
         self.losses = []
 

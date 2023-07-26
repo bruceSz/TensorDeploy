@@ -20,7 +20,7 @@ def train_loop(model, model_train, tc, model_cus_train):
     
     
 
-    if tc.freeze_train:
+    if tc.freeze_train and  hasattr(model, "freeze_backbone"):
         model.freeze_backbone()
 
     loss_history = tc.get_loss_history(model)

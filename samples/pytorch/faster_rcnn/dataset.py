@@ -5,14 +5,10 @@ from PIL import Image
 import numpy as np
 import torch
 
-def cvtColorGaurd(image):
-    # hwc, where  c == 3
-    if len(np.shape(image)) == 3 and np.shape(image)[2] == 3:
-        return image
-    else:
-        image = image.convert('RGB')
-        return image
+#from framework.utils import common
 
+
+from common.utils import cvtColorGaurd
 
 
 def preprocess_image(image):
@@ -147,14 +143,16 @@ class FasterRCNNDataSet(Dataset):
 
         r = np.random.uniform(-1,1,3) * [hue, sat, val] + 1
 
-        hue, sat, val = cv2.split(cv2.cvtColor(img_data,cv2.COLOR_BGR2HSV))
+        hue, sat, val = cv2.split(cv2.cvtColor(img_data,cv2.COLOR_RGB2HSV))
 
         dtype = img_data.dtype
 
-        x = np.arange(0,256, dtype=dtype)
+        x = np.arange(0,256, dtype=r.dtype)
         lut_hue = ((x * r[0]) %180).astype(dtype)
         lut_sat = np.clip(x* r[1], 0, 255).astype(dtype)
-        lut_val = np.clip(x*r[2], 0,255).astype(dtype)
+        lut_val = np.clip(x* r[2], 0, 255).astype(dtype)
+        print("---- lut_hue shape: ",hue.shape, "xx" , lut_hue.shape)
+        print("---- lut_sat shape: ",sat.shape, "xx" , lut_sat.shape)
 
         image_data = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
         image_data = cv2.cvtColor(image_data, cv2.COLOR_HSV2BGR)
