@@ -6,6 +6,7 @@ import numpy as np
 from torch.hub import load_state_dict_from_url
 import torch.distributed  as dist
 from centernet.centernet_resnet50 import CenterNet_Resnet50
+from ssd.ssd300 import SSD300
 from fcn.fcn32 import FCN32
 
 from framework import dataset_mgr
@@ -151,5 +152,7 @@ class ModelManager(object):
             }
         elif model_name == "fcn32":
             return {}
+        elif model_name == "ssd":
+
         else:
             raise NotImplementedError("Unknown model: {}".format(model_name))

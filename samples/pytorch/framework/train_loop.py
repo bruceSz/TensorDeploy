@@ -88,15 +88,15 @@ def train_loop(model, model_train, tc, model_cus_train):
 
 def test():
     flags = create_parser()
-    args = flags.parse_args()
-    print(args)
+    #args = flags.parse_args()
+    #print(args)
    
-    tc = TrainConfig(args)
+    """ tc = TrainConfig(args)
     model_mgr = ModelManager(tc)
 
     model_mgr.init()
     model = model_mgr.get_model(flags.model)
-
+ """
 
 
 if __name__ == '__main__':
