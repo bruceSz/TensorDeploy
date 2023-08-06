@@ -35,7 +35,7 @@ def get_max_index(array):
     return max_i, max_j
 
 def conv(input, kernel, output, stride, bias):
-    channels = input.ndim
+    #
     # 2d case.
     output_width = output.shape[-1]
     output_height = output.shape[-2]
@@ -44,7 +44,8 @@ def conv(input, kernel, output, stride, bias):
 
     for i in range(output_height):
         for j in range(output_width):
-            output[i][j] = (get_patch(input, i, j, kernel_width, kernel_height, stride) * kernel).sum() + bias
+            output[i][j] = (get_patch(input, i, j, kernel_width, kernel_height, stride) * kernel).sum()\
+                + bias
 
 
 
@@ -81,7 +82,7 @@ def element_wise(input, op):
 
 
 class Filter(object):
-    def __init__(self, width, height, depth) -> None:
+    def __init__(self, width, height, depth):
         self.weights = np.random.uniform(-1e-4, 1e-4, (depth, height, width))
         self.bias = 0
         self.weights_grad = np.zeros(
@@ -114,11 +115,11 @@ class ConvLayer(object):
         self.filter_num = filter_num
         self.zero_padding = zero_padding
         self.stride = stride
-        self.output_width = ConvLayer.calculate_output_width(self.in_width, 
+        self.output_width = ConvLayer.calculate_output_size(self.in_width, 
                                                             self.filter_width, 
                                                             self.zero_padding,
                                                             stride)
-        self.output_height = ConvLayer.calculate_output_height(self.in_height, 
+        self.output_height = ConvLayer.calculate_output_size(self.in_height, 
                                                             self.filter_height, 
                                                             self.zero_padding,
                                                             stride)
@@ -151,10 +152,14 @@ class ConvLayer(object):
             filter.update(self.lr)
 
 
+    #
+    # sensitivity map is also named as delta map from next layer, we need
+    # to back-propagate the delta map to previous layer.
+    #
     def bp_sensitivity_map(self, sensitivity_arr, activator):
         expanded_arr = self.expand_sensitivity_map(sensitivity_arr)
         expanded_width = expanded_arr.shape[2]
-        zp = int((self.input_width + self.filter_width -1 - expanded_width) / 2)
+        zp = int((self.in_width + self.filter_width -1 - expanded_width) / 2)
 
         padded_arr = padding(expanded_arr, zp)
         self.delta_array = self.create_delta_array()
@@ -200,9 +205,9 @@ class ConvLayer(object):
         # TODO, figure it out.
         depth = sensitivity_arr.shape[0]
         #(h - k_h + 2p)/stripe + 1 ？
-        expanded_width = (self.input_width - 
+        expanded_width = (self.in_width - 
                           self.filter_width + 2 * self.zero_padding + 1)
-        expanded_height = (self.input_height - 
+        expanded_height = (self.in_height - 
                            self.filter_height + 2 * self.zero_padding + 1)
         expand_array = np.zeros((depth, expanded_height, expanded_width))
 
@@ -211,13 +216,131 @@ class ConvLayer(object):
                 i_pos = i* self.stride
                 j_pos = j* self.stride
                 expand_array[:, i_pos, j_pos] = sensitivity_arr[:, i, j]
-
+        print("shape of sensitivity_arr:", sensitivity_arr.shape)
+        print("shape of expand_array:", expand_array.shape)
         return expand_array
 
 
     @staticmethod
-    def calculate_output_width(in_width, filter_width, zero_padding, stride):
+    def calculate_output_size(in_width, filter_width, zero_padding, stride):
         return int((in_width - filter_width + 2 * zero_padding)/stride + 1)
         
 
+class MaxPoolingLayer(object):
+    def __init__(self, in_width, in_height, channels, filter_width, filter_height, stride) -> None:
+        self.input_width = in_width
+        self.input_height = in_height
+        self.channels = channels
+        self.filter_width = filter_width
+        self.filter_height = filter_height
+        self.stride = stride
+        self.output_width = ((self.input_width - filter_width)/self.stride + 1)
+        self.output_height = ((self.input_height - filter_height)/self.stride + 1)
+
+        self.output_array = np.zeros((self.channels, self.output_height, self.output_width))
+
+
+    def forward(self, input):
+        for d in range(self.channels):
+            for i in range(self.output_height):
+                for j in range(self.output_width):
+                    self.output_array[d, i, j] = (get_patch(input[d], i, j, 
+                                                            self.filter_width, 
+                                                            self.filter_height,
+                                                            self.stride).max())
+                    
+
+    def backward(self, input, sesitivity_arr):
+        self.delta_array = np.zeros((input.shape))
+        for d in range(self.channels):
+            for i in range(self.output_height):
+                for j in range(self.output_width):
+                    patch_array = get_patch(
+                        input[d], i, j,
+                        self.filter_width, self.filter_height,
+                        self.stride
+                    )
+                    # TODO, memorize this to save computation.
+                    k,l = get_max_index(patch_array)
+                    self.delta_array[d,i * self.stride + k,
+                                     j * self.stride + l] = sesitivity_arr[d,i,j]
+
+                    
+
+
+
+def init_test():
+    a = np.array(
+        [[[0,1,1,0,2],
+          [2,2,2,2,1],
+          [1,0,0,2,0],
+          [0,1,1,0,0],
+          [1,2,0,0,2]],
+           [[1,0,2,2,0],
+          [0,0,0,2,0],
+          [1,2,1,2,1],
+          [1,0,0,0,0],
+          [1,2,1,1,1]],
+         [[2,1,2,0,0],
+          [1,0,0,1,0],
+          [0,2,1,0,1],
+          [0,1,2,2,2],
+          [2,1,0,0,1]]])
+    
+    b = np.array(
+        [[[0,1,1],
+          [2,2,2],
+          [1,0,0]],
+          [[1,0,2],
+           [0,0,0],
+           [1,2,1]]
+        ]
+    )
+                        
+    cl = ConvLayer(in_width =5, in_height  = 5,
+                   channels = 3, filter_width= 3, filter_height = 3,
+                   filter_num = 2,
+                   zero_padding = 1, stride = 2,activator = IdentityActivator(), lr =  0.001)
+    cl.filters[0].weights = np.array( [[[-1,1,0],
+          [0,1,0],
+          [0,1,1]],
+         [[-1,-1,0],
+          [0,0,0],
+          [0,-1,0]],
+         [[0,0,-1],
+          [0,1,0],
+          [1,-1,-1]]], dtype=np.float64)
+    
+    cl.filters[0].bias=1
+    cl.filters[1].weights = np.array(
+        [[[1,1,-1],
+          [-1,-1,1],
+          [0,-1,1]],
+         [[0,1,0],
+         [-1,0,-1],
+          [-1,1,0]],
+         [[-1,0,0],
+          [-1,0,1],
+          [-1,0,0]]], dtype=np.float64)
+    return a, b, cl
+
+
+
+def test():
+    a,b,cl = init_test()
+    cl.forward(a)
+    print(cl.output)
+
+
+
+def test_bp():
+    a,b,cl = init_test()
+    cl.backward(a,b, IdentityActivator())
+    cl.update()
+    print(cl.filters[0])
+    print(cl.filters[1])
+
+if __name__ == '__main__':
+    test()
+    test_bp()
 

@@ -23,14 +23,17 @@ def train():
     tc = TrainConfig(args)
     model_mgr = ModelManager(tc)
 
-    """
-    model_mgr.init_backbone()
-    model = model_mgr.get_model()
-    model_train = tc.get_model_train(model)
+    
 
-    #print(model)
-    train_loop(model, model_train,  tc, epoch_train)
-     """
+    
+    # model_mgr.init_backbone()
+    # model = model_mgr.get_model()
+    # model_train = tc.get_model_train(model)
+
+
+    # #print(model)
+    # train_loop(model, model_train,  tc, epoch_train)
+    
 
 
 if __name__ == "__main__":

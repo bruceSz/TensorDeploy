@@ -4,6 +4,7 @@ import time
 import torch
 import numpy as np
 from PIL import Image
+import os
 
 def pool_nms(hm, kernel=3):
     pad = (kernel - 1) // 2
@@ -119,3 +120,22 @@ def resize_image(image, size, letterbox_img):
     else:
         new_image = image.resize((w, h), Image.BICUBIC)
     return new_image
+
+
+def load_model_from_path(model, full_path):
+    
+    if os.path.isfile(full_path):
+        model_dict = model.state_dict()
+        device = model.parameters().__next__().device
+        pretrained_dict = torch.load(full_path, map_location = device)
+        load_key, no_load_key, tmp_dict = [], [], {}
+        for k, v in pretrained_dict.items():
+            if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+                tmp_dict[k] = v
+                load_key.append(k)
+            else:
+                no_load_key.append(k)
+        model_dict.update(tmp_dict)
+        model.load_state_dict(model_dict)
+    else:
+        print("not existing weight file: ", full_path)

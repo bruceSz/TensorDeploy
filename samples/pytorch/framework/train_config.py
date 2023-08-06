@@ -17,9 +17,28 @@ from framework.train_helper import LossHistory
 from framework.dataset_mgr import DataSetMgr
 from framework.model_mgr import ModelManager
 
+class CIFARConfig(object):
+    def __init__(self) -> None:
+        self.batch_size = 64
+
+        self.num_print = 100
+        self.epoch_n = 30
+
+        self.lr = 0.01
+
+        self.step_size = 10
+
+        self.gamma = 0.3
+        self.model_dir = './models'
+
+        self.epoch_trained_model = './models/vgg16_epoch_31.pth'
+
 class TrainConfig(object):
     
     def __init__(self, args) -> None:
+
+        
+
         self.init_epoch = 0
         self.freeze_epoch = 1
         self.freeze_batch_size = 16

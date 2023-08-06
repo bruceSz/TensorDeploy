@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 import torch
 import cv2
+from torchvision import transforms
+from torchvision import datasets
 
 from common.utils import cvtColorGaurd
 from common.utils import singleton
@@ -106,6 +108,51 @@ def box_filter(box, dx, dy, nw, nh, iw, ih, w, h):
     box = box[np.logical_and(box_w > 1, box_h > 1)]
 
     return box
+
+class CIFar10_Dataset(object):
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def get_transform_loader(self):
+        
+        transform_train = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406),(0.226, 0.225, 0.224))
+        ])
+
+        transform_val = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize((0.485, 0.456, 0.406),(0.226, 0.225, 0.224))])
+        
+        return transform_train, transform_val
+   
+    #return train_dat, val_dat
+
+    @classmethod
+    def get_dataset(cls, info : dict, train_flag=True):
+        # abstract into pre_process.py
+        trans_train, trans_val = cls.get_transform_loader(info)
+
+        train_dat = datasets.CIFAR10(root='./data', train=train_flag, 
+                                     download=True, transform=trans_train)
+
+        val_dat = datasets.CIFAR10(root='./data', train=train_flag,
+                                     download=True, transform=trans_val)
+    
+
+        if train_flag:
+            return train_dat
+        else:
+            return val_dat
+      
+        # train_loader = DataLoader(train_dat, batch_size=conf.batch_size, 
+        #                         shuffle=True)
+        
+        # val_loader = DataLoader(val_dat, batch_size=conf.batch_size,
+        #                         shuffle=False)
+        
+      
 
 class VOC_SEG_Dataset(object):
     CLS_NAMES = np.array([
@@ -484,15 +531,19 @@ def centernet_dataset_collate(batch):
 @singleton
 class DataSetMgr(object):
     # VOC_DATASET_DIR = ""
+    VOC_CENTERNET_DS =  "voc_centernet"
+    VOC_SEG_DS = "voc_seg"
+    CIFAR_10 = "cifar10"
     def __init__(self) -> None:
         self.date_ts = time.time()
 
-    def get_dataset(self, name, model_info, train=False):
-        if name == "voc_centernet":
-            return VOC_center_Dataset(model_info, train), centernet_dataset_collate
-        if name == "voc_seg":
-            return VOC_SEG_Dataset(model_info,train=train, is_cls_seg=True), voc_fcn_dataset_collate
-
+    def get_dataset(self, name, info, train=False):
+        if name == DataSetMgr.VOC_CENTERNET_DS:
+            return VOC_center_Dataset(info, train), centernet_dataset_collate
+        elif name == DataSetMgr.VOC_SEG_DS:
+            return VOC_SEG_Dataset(info,train=train, is_cls_seg=True), voc_fcn_dataset_collate
+        elif name == DataSetMgr.CIFAR_10:
+            return  CIFar10_Dataset.get_dataset(info, train), None
         else:
             raise NotImplementedError("Unknown dataset: {}".format(name))
     

@@ -8,6 +8,7 @@ import torch.distributed  as dist
 from centernet.centernet_resnet50 import CenterNet_Resnet50
 from ssd.ssd300 import SSD300
 from fcn.fcn32 import FCN32
+from common import utils
 
 from framework import dataset_mgr
 
@@ -123,23 +124,11 @@ class ModelManager(object):
         path = self._get_weight_name(self.model_name + "_" + self.backbone)
         print("ready to init model with weight file: {}".format( path))   
         
-        
-
         full_path = os.path.join(self.LOCAL_MODEL_PATH, path)
-        if os.path.isfile(full_path):
-            model_dict = model.state_dict()
-            pretrained_dict = torch.load(full_path, map_location = self.tc.device)
-            load_key, no_load_key, tmp_dict = [], [], {}
-            for k, v in pretrained_dict.items():
-                if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
-                    tmp_dict[k] = v
-                    load_key.append(k)
-                else:
-                    no_load_key.append(k)
-            model_dict.update(tmp_dict)
-            model.load_state_dict(model_dict)
-        else:
-            print("not existing weight file: ", full_path)
+        utils.load_model_from_path(model, full_path)
+
+        
+        
 
     @classmethod
     def get_model_infos(cls, model_name):
@@ -153,6 +142,7 @@ class ModelManager(object):
         elif model_name == "fcn32":
             return {}
         elif model_name == "ssd":
+            pass
 
         else:
             raise NotImplementedError("Unknown model: {}".format(model_name))

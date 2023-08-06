@@ -27,7 +27,7 @@ def train_loop(model, model_train, tc, model_cus_train):
     nbs = 64
     batch_size = tc.freeze_batch_size if tc.freeze_train else tc.unfreeze_batch_size
     init_lr_fit, min_lr_fit, lr_scheduler_func =  tc.get_train_adapt_lr(batch_size, nbs=nbs)
-
+    unfreeze_flag = False
     
     # lr_limit_max = 5e-4 if tc.opt_type == "adam" else 5e-2
     # lr_limit_min = 2.5e-4 if tc.opt_type == "adam" else 5e-4
@@ -51,7 +51,7 @@ def train_loop(model, model_train, tc, model_cus_train):
 
     
     for epoch in range(tc.init_epoch, tc.unfreeze_epoch):
-        if epoch >= tc.freeze_epoch and not tc.unfreeze_flag and tc.freeze_train:
+        if epoch >= tc.freeze_epoch and not unfreeze_flag and tc.freeze_train:
             batch_size = tc.unfreeze_batch_size
             nbs = 64
 
@@ -68,7 +68,7 @@ def train_loop(model, model_train, tc, model_cus_train):
             gen = tc.get_train(batch_size)
             gen_val = tc.get_val(batch_size)
 
-            tc.unfreeze_flag = True
+            unfreeze_flag = True
         if tc.distributed:
             tc.train_sampler.set_epoch(epoch)
             
